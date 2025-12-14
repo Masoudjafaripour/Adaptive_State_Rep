@@ -95,7 +95,7 @@ This project is based on foundational ideas in:
 - Representation Learning in RL
 - PPO with Stable-Baselines3
 
-Contributors: *Your Name Here*
+Contributors: *Masoud Jafaripour*
 
 ---
 
