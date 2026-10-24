@@ -1,7 +1,10 @@
 import os
+import time
 import gymnasium as gym  # Updated import
 import numpy as np
 import cv2
+import matplotlib
+matplotlib.use("Agg")  # headless: plots are written to PNG files
 import matplotlib.pyplot as plt
 
 from gymnasium import ObservationWrapper  # Updated import
@@ -9,6 +12,15 @@ from gymnasium.spaces import Box  # Updated import
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
 from stable_baselines3.common.monitor import Monitor, load_results
+from stable_baselines3.common.callbacks import BaseCallback
+
+from PIL import Image
+
+# all outputs live next to this script: logs/, plots/, demo/, README.md
+EXP_DIR   = os.path.dirname(os.path.abspath(__file__))
+LOG_DIR   = os.path.join(EXP_DIR, 'logs')
+PLOTS_DIR = os.path.join(EXP_DIR, 'plots')
+DEMO_DIR  = os.path.join(EXP_DIR, 'demo')
 
 # ------------------------------------------------------------------------------
 
@@ -133,72 +145,166 @@ class FusedKFObsWrapper(ObservationWrapper):
 
 # ------------------------------------------------------------------------------
 
-def make_env(wrapper_cls, log_dir, **kwargs):
-    os.makedirs(log_dir, exist_ok=True)
+def make_env(wrapper_cls, log_dir=None, **kwargs):
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
     def _init():
         # env = gym.make("CartPole-v1", render_mode="human")  # Updated to gymnasium
-        env = gym.make("CartPole-v1", render_mode=None)  # No animation
+        # rgb_array is required: with render_mode=None, env.render() returns None
+        # and the image/fused wrappers silently fall back to all-zero frames
+        env = gym.make("CartPole-v1", render_mode="rgb_array")
         env = wrapper_cls(env, **kwargs)
-        env = Monitor(env, filename=os.path.join(log_dir, 'monitor.csv'))
+        if log_dir:
+            env = Monitor(env, filename=os.path.join(log_dir, 'monitor.csv'))
         return env
     return DummyVecEnv([_init])
 
 # ------------------------------------------------------------------------------
 
 
-def train_sensor_only(log_dir='logs/sensor', timesteps=20_000):
+class LivePlotCallback(BaseCallback):
+    """Redraw the learning-curve PNG every `plot_freq` steps during training."""
+    def __init__(self, log_dirs, plot_freq=2_000):
+        super().__init__()
+        self.log_dirs  = log_dirs
+        self.plot_freq = plot_freq
+
+    def _on_step(self):
+        if self.n_calls % self.plot_freq == 0:
+            plot_learning_curves(self.log_dirs, os.path.join(PLOTS_DIR, 'live_training.png'))
+        return True
+
+
+def train_sensor_only(log_dir=os.path.join(LOG_DIR, 'sensor'), timesteps=20_000, callback=None):
     env = make_env(SensorObsWrapper, log_dir)
     model = PPO('MlpPolicy', env, verbose=1)
-    model.learn(total_timesteps=timesteps)
+    model.learn(total_timesteps=timesteps, callback=callback)
     model.save(os.path.join(log_dir, 'model'))
-    return log_dir
+    return model
 
-def train_image_only(log_dir='logs/image', timesteps=20_000):
+def train_image_only(log_dir=os.path.join(LOG_DIR, 'image'), timesteps=20_000, callback=None):
     env = make_env(ImageObsWrapper, log_dir, width=64, height=64)
     env = VecTransposeImage(env)  # (C, H, W) ordering for CnnPolicy
     model = PPO('CnnPolicy', env, verbose=1)
-    model.learn(total_timesteps=timesteps)
+    model.learn(total_timesteps=timesteps, callback=callback)
     model.save(os.path.join(log_dir, 'model'))
-    return log_dir
+    return model
 
-def train_fused_kf(log_dir='logs/fused_kf', timesteps=20_000):
+def train_fused_kf(log_dir=os.path.join(LOG_DIR, 'fused_kf'), timesteps=20_000, callback=None):
     env = make_env(FusedKFObsWrapper, log_dir, width=32, height=32)
     model = PPO('MlpPolicy', env, verbose=1)
-    model.learn(total_timesteps=timesteps)
+    model.learn(total_timesteps=timesteps, callback=callback)
     model.save(os.path.join(log_dir, 'model'))
-    return log_dir
+    return model
 # ------------------------------------------------------------------------------
 
 
-def plot_learning_curves(log_dirs):
+def plot_learning_curves(log_dirs, out_path, window=20):
+    """Plot per-episode returns (faint) and a rolling mean (solid) for each agent."""
     plt.figure(figsize=(8, 5))
     for label, log_dir in log_dirs.items():
+        if not os.path.exists(os.path.join(log_dir, 'monitor.csv')):
+            continue
         df = load_results(log_dir)
-        returns = df['r']
-        plt.plot(returns.values, label=label)
-    plt.xlabel('Episode')
-    plt.ylabel('Return')
+        if df.empty:
+            continue
+        steps, returns = df['l'].cumsum().values, df['r']
+        line, = plt.plot(steps, returns.values, alpha=0.25)
+        plt.plot(steps, returns.rolling(window, min_periods=1).mean().values,
+                 color=line.get_color(), label=label)
+    plt.xlabel('Timestep')
+    plt.ylabel('Episode return')
     plt.title('PPO on CartPole: Sensor vs. Image vs. KF-Fused Observations')
-    plt.legend()
+    plt.legend(loc='upper left')
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    plt.savefig(out_path, dpi=120)
+    plt.close()
+
+
+def write_results_readme(log_dirs, wall_times, timesteps, window=20):
+    rows = []
+    for label, log_dir in log_dirs.items():
+        df = load_results(log_dir)
+        r = df['r']
+        rows.append(f"| {label} | {len(df)} | {r.tail(window).mean():.1f} ± {r.tail(window).std():.1f} "
+                    f"| {r.max():.0f} | {wall_times[label]/60:.1f} |")
+    text = f"""# Baselines: PPO on CartPole-v1
+
+Generated by `src/baselines/train.py` ({timesteps:,} timesteps per agent, 1 seed, default SB3 PPO hyperparameters).
+
+| Agent | Episodes | Return (last {window} eps, mean ± std) | Best return | Wall time (min) |
+|---|---|---|---|---|
+""" + "\n".join(rows) + """
+
+Max possible return is 500.
+
+![Learning curves](plots/learning_curves.png)
+
+## Demos (greedy policy, 1 episode each)
+
+| Sensor Only | Image Only | KF-Fused |
+|---|---|---|
+| ![](demo/sensor.gif) | ![](demo/image.gif) | ![](demo/fused_kf.gif) |
+
+Run: `srep-venv/bin/python src/baselines/train.py` (from the repo root). The live plot `plots/live_training.png` is redrawn every 2k steps during training.
+
+- **Sensor Only**: 4D CartPole state.
+- **Image Only**: 64x64 grayscale render, `CnnPolicy`. A single frame has no velocity information.
+- **KF-Fused**: Kalman filter over the sensor state and a *fixed random projection* of a 32x32 render (fixed Q/R, no learned gain).
+"""
+    with open(os.path.join(EXP_DIR, 'README.md'), 'w') as f:
+        f.write(text)
+
+def record_gif(model, env, out_path, max_steps=500, fps=30):
+    """Roll out one greedy episode on a VecEnv and save the rendered frames as a GIF."""
+    obs = env.reset()
+    frames, ret = [], 0.0
+    for _ in range(max_steps):
+        frames.append(Image.fromarray(env.envs[0].render()))
+        action, _ = model.predict(obs, deterministic=True)
+        obs, reward, done, _ = env.step(action)
+        ret += reward[0]
+        if done[0]:
+            break
+    frames[0].save(out_path, save_all=True, append_images=frames[1:][::2],
+                   duration=2 * 1000 // fps, loop=0)
+    return ret
 
 # ------------------------------------------------------------------------------
 
 if __name__ == '__main__':
-    print("Training sensor-only agent...")
-    sensor_logs = train_sensor_only()
+    for d in (PLOTS_DIR, DEMO_DIR):
+        os.makedirs(d, exist_ok=True)
+    timesteps = 20_000
+    agents = [
+        ('Sensor Only', train_sensor_only, 'sensor'),
+        ('Image Only',  train_image_only,  'image'),
+        ('KF-Fused',    train_fused_kf,    'fused_kf'),
+    ]
+    log_dirs, wall_times, models = {}, {}, {}
+    for label, train_fn, name in agents:
+        print(f"Training {label} agent...")
+        # live plot shows agents finished so far plus the one currently training
+        log_dirs[label] = os.path.join(LOG_DIR, name)
+        start = time.time()
+        models[name] = train_fn(log_dir=log_dirs[label], timesteps=timesteps,
+                                callback=LivePlotCallback(dict(log_dirs)))
+        wall_times[label] = time.time() - start
 
-    print("Training image-only agent...")
-    image_logs = train_image_only()
+    plot_learning_curves(log_dirs, os.path.join(PLOTS_DIR, 'learning_curves.png'))
 
-    print("Training KF-fused agent...")
-    fused_logs = train_fused_kf()
+    # demo GIFs on fresh, unmonitored envs so the training monitor.csv files are untouched
+    eval_envs = {
+        'sensor':   make_env(SensorObsWrapper, None),
+        'image':    VecTransposeImage(make_env(ImageObsWrapper, None,
+                                               width=64, height=64)),
+        'fused_kf': make_env(FusedKFObsWrapper, None,
+                             width=32, height=32),
+    }
+    for name, env in eval_envs.items():
+        ret = record_gif(models[name], env, os.path.join(DEMO_DIR, f'{name}.gif'))
+        print(f"Demo {name}: return {ret:.0f}")
 
-    # Plot all three learning curves
-    plot_learning_curves({
-        'Sensor Only': sensor_logs,
-        'Image Only':  image_logs,
-        'KF-Fused':     fused_logs
-    })
+    write_results_readme(log_dirs, wall_times, timesteps)
+    print(f"Results written to {EXP_DIR}/")

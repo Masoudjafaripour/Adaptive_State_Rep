@@ -1,0 +1,29 @@
+{
+  "n_envs": 64,
+  "episode_len": 200,
+  "horizon": 25,
+  "lr": 0.001,
+  "aux_weight": 0.5,
+  "nll_weight": 0.1,
+  "grad_clip": 1.0,
+  "eval_envs": 64,
+  "eval_len": 500,
+  "corrupt_window": [
+    150,
+    350
+  ],
+  "eval_every": 10,
+  "methods": [
+    "learned_kf",
+    "concat",
+    "gru",
+    "fixed_kf",
+    "sensor_only",
+    "poe",
+    "gated",
+    "image_only"
+  ],
+  "iters": 150,
+  "seed": 2,
+  "run_id": "run03-seed2"
+}

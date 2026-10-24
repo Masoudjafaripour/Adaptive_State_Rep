@@ -1,107 +1,60 @@
-# Adaptive_State_Rep
+# Adaptive State Representation
 
-A repository for our project: **"Adaptive State Representation in Reinforcement Learning"**, which investigates how to fuse **compact low-dimensional state features** and **rich high-dimensional inputs (e.g., images)** using a **learned Kalman Gain**. The agent dynamically balances these two input sources to achieve robust control under **partial observability** and **sensor noise**.
+**Adaptive State Representation in Reinforcement Learning.** This project learns *feature-fusion gains* that combine a compact sensor state with rich image observations. The gains are trained end to end through a differentiable simulator, so the agent can shift its trust between the two sources when either one becomes noisy or corrupted.
 
----
+## Core idea
 
-## 🚀 Project Motivation
-Reinforcement Learning (RL) agents deployed in real-world environments (e.g., robotics, control) often suffer from:
-- **Incomplete observations** (partial observability)
-- **Noisy sensors** or **missing modalities**
-- Trade-offs between **compact features** (efficient but limited) and **rich raw inputs** (descriptive but noisy and large)
+A Kalman filter whose measurement noise, and therefore its gain, is predicted at every step by networks:
 
-This repo explores an adaptive fusion mechanism to create **robust state representations** via a learnable Kalman Gain.
+$$\hat x_t = (I - K_{s,t} - K_{i,t})\,\hat x^-_t + K_{s,t}\, z_t + K_{i,t}\, \mu^{img}_t, \qquad K_{s,t} = P_t R_{s,t}^{-1},\quad K_{i,t} = P_t R_{i,t}^{-1}$$
 
----
+- $\hat x^-_t = A\hat x_{t-1} + Bu_{t-1}$ is the prediction from learned dynamics.
+- $z_t$ is the noisy sensor reading.
+- $\mu^{img}_t$ is the CNN's state estimate from two stacked frames.
+- $R_{s,t} = S^2\,\mathrm{diag}\,\exp \mathrm{NN}_s([z_t - \hat x^-_t,\ z_t - \mu^{img}_t])$ and $R_{i,t} = \mathrm{diag}(v^{img}_t)$ are the predicted measurement noise of each source.
 
-## 📌 Core Idea
-We propose learning a Kalman Gain, denoted \( K_t \), that fuses compact state \( \mathbf{o}_t^{\text{compact}} \) and raw image-derived state \( \mathbf{o}_t^{\text{raw}} \) as:
+Everything (CNN, noise networks, dynamics and policy $u_t = \tanh\pi_\theta(\hat x_t, P_t)$) is trained jointly by backpropagating the return through the simulator and renderer:
 
-\[ \mathbf{x}_t = K_t \cdot \mathbf{o}_t^{\text{compact}} + (1 - K_t) \cdot \mathbf{h}_\theta(\mathbf{o}_t^{\text{raw}}) \]
+$$\mathcal L = -\tfrac{1}{HN}\textstyle\sum r_t \;+\; \lambda_{aux}\lVert S^{-1}(\hat x_t - s_t)\rVert^2 \;+\; \lambda_{nll}\,\tfrac12\left(\log v_t + e_t^2 / v_t\right)$$
 
-Where:
-- \( \mathbf{h}_\theta(\cdot) \): A neural network to extract features from raw image
-- \( K_t \): Learned dynamically from the actor network
+The NLL term teaches each source's variance $v_t$ its actual error $e_t$, which is what makes the gain adapt. Full derivation: [src/fusion_e2e/README.md](src/fusion_e2e/README.md#equations).
 
-This fused state \( \mathbf{x}_t \) is then used for policy learning with PPO.
+## Experiments
 
----
+| Folder | What it tests | Status |
+|---|---|---|
+| [src/baselines/](src/baselines/) | PPO (SB3) on Gymnasium CartPole: sensor-only vs image-only vs a fixed-gain Kalman filter fusion | ✅ Sensor 293, image 34, KF-fused 28 (return, max 500). Fixed fusion over a random image projection *hurts*. |
+| [src/fusion_e2e/](src/fusion_e2e/) | 8 fusion methods (sensor/image only, concat, fixed KF, gated, GRU, product of experts, **learned KF**) on a differentiable JAX CartPole with sensor or image corruption windows | 🟡 3 seeds running. Seed 0 so far: `concat` 476, `sensor_only` 443, `image_only` 363 (survival, max 500) |
+| [src/learned_gain_draft/](src/learned_gain_draft/) | First prototype: actor network that outputs an action and a gain (Acrobot) | Archived, no training loop |
 
-## 🧠 Features
-- PPO training with:
-  - `Sensor-only` agent (4D state vector)
-  - `Image-only` agent (grayscale image)
-  - `Fused` agent (Kalman filter with sensor + image)
-- `FusedKFObsWrapper`: Implements Kalman filtering with fixed or learned gain
-- `VecTransposeImage` support for CNN input
-- Visualization of reward curves for comparison
+Details and metrics: [src/README.md](src/README.md). Every fusion_e2e run is logged in [runs/records.csv](src/fusion_e2e/runs/records.csv).
 
----
+## Setup
 
-## 🏗️ Project Structure
 ```bash
-KF_RL/
-├── 3_all.py                  # Main training script
-├── wrappers.py              # Custom observation wrappers (sensor, image, fused)
-├── utils.py                 # Plotting and helper utilities
-├── custom_cartpole.py       # Optional: custom env definitions
-├── logs/                    # Saved model checkpoints and reward logs
-└── requirements.txt
+uv venv srep-venv --python 3.11
+VIRTUAL_ENV=$PWD/srep-venv uv pip install "jax[cpu]" optax flax torch gymnasium stable-baselines3 \
+    opencv-python-headless matplotlib pygame pandas
 ```
 
----
+## Run
 
-## 📈 Example Results
-We compare performance across the three agents (sensor-only, image-only, fused) in `CartPole-v1`:
-
-- **Sensor-only**: fast learning but sensitive to sensor noise
-- **Image-only**: robust but slow to learn
-- **Fused (KF)**: balances both, showing robustness and faster learning
-
-![Learning Curve Placeholder](learning_curve.png)
-
----
-
-## 📦 Installation
 ```bash
-# Create and activate a new environment
-conda create -n adaptive_state_rep python=3.11
-conda activate adaptive_state_rep
-
-# Install dependencies
-pip install -r requirements.txt
+srep-venv/bin/python src/baselines/train.py                       # PPO baselines
+srep-venv/bin/python src/fusion_e2e/train.py --seed 0             # all fusion methods
+srep-venv/bin/python src/fusion_e2e/train.py --methods learned_kf # one method
+srep-venv/bin/python src/fusion_e2e/analyze.py                    # aggregate seeds -> README + plots
 ```
 
-If Box2D is problematic:
-```bash
-pip install pygame
-pip install box2d
-```
+Training writes a live plot to `plots/live_training.png` (matplotlib Agg) and demo GIFs to `demo/`.
 
----
+## To do
 
-## 🔧 Run Training
-```bash
-# Train all three modes sequentially
-python 3_all.py
-```
-Or edit the script to run only `sensor`, `image`, or `fused_kf` mode.
-
----
-
-## 📜 Citation / Credits
-This project is based on foundational ideas in:
-- Kalman Filtering
-- Representation Learning in RL
-- PPO with Stable-Baselines3
+- [x] PPO baselines (sensor, image, fixed-gain KF)
+- [x] Differentiable CartPole + soft renderer (JAX)
+- [x] Learned, input-dependent Kalman gain trained end to end
+- [x] Gain dynamics logged and plotted over time
+- [ ] Multi-seed comparison: performance and sample efficiency (running)
+- [ ] Harder corruption (sensor bias, longer windows), Acrobot / MountainCar
 
 Contributors: *Masoud Jafaripour*
-
----
-
-## ✅ To Do
-- [x] Train PPO on sensor-only and image-only inputs
-- [x] Implement fused Kalman-based observation
-- [ ] Log Kalman Gain dynamics over time
-- [ ] Add learned Kalman Gain via neural output
-- [ ] Test on Acrobot and MountainCar

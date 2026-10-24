@@ -1,0 +1,4 @@
+Hand-written log; embedded into README.md on every run.
+
+- **2026-10-23, reward:** the first version used $r = \cos\theta - \dots$, which is about 0.98 at the 12° failure limit. Training gave almost no signal and agents failed in about 50 steps. Switched to a quadratic penalty scaled by the failure limits; `sensor_only` then reached about 500 survival steps in 20 iterations.
+- **2026-10-23, variance heads:** without direct supervision, the noise networks in `learned_kf` stayed at their initial value, and the weight on the sensor sat flat at about 0.08. Adding the Gaussian NLL on each source's predicted variance, with heads initialised at the nominal noise levels, made the gain adapt. In a 40-iteration smoke test, the sensor weight dropped from 0.62 to 0.18 during sensor corruption and recovered afterwards.

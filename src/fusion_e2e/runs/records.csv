@@ -1,0 +1,5 @@
+run_id,timestamp,method,iters,seed,clean,sensor_corrupt,image_corrupt,mean,est_rmse,train_min
+run01,2026-10-23 21:09,sensor_only,150,0,499.7,328.1,499.7,442.5,0.2410,0.66
+run01,2026-10-23 21:17,image_only,150,0,453.4,453.4,183.6,363.5,0.2054,8.19
+run01,2026-10-23 21:25,concat,150,0,497.4,442.5,487.9,475.9,0.1307,7.91
+run01,2026-10-23 21:35,fixed_kf,150,0,500.0,348.0,500.0,449.3,0.2046,9.78
