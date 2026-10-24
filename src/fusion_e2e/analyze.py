@@ -24,10 +24,10 @@ MODES = ['clean', 'sensor_corrupt', 'image_corrupt']
 THRESHOLD = 450   # survival steps (mean of 3 conditions) counted as "solved"
 
 
-def load_runs():
+def load_runs(runs_dir=RUNS_DIR):
     """-> {(method, iters): [ {seed, steps, curve, sensor_curve, final}, ... ]}"""
     groups = {}
-    for cfg_path in sorted(glob.glob(os.path.join(RUNS_DIR, '*', 'config.json'))):
+    for cfg_path in sorted(glob.glob(os.path.join(runs_dir, '*', 'config.json'))):
         run_dir = os.path.dirname(cfg_path)
         cfg = json.load(open(cfg_path))
         steps_per_iter = cfg['n_envs'] * cfg['episode_len']
@@ -94,15 +94,15 @@ def plot_sample_efficiency(groups, iters, out_path, methods_order):
     plt.close(fig)
 
 
-def readme_section(methods_order):
+def readme_section(methods_order, runs_dir=RUNS_DIR, plots_dir=PLOTS_DIR):
     """Markdown for README; also refreshes plots/sample_efficiency.png."""
-    groups = load_runs()
+    groups = load_runs(runs_dir)
     if not groups:
         return []
     rows = summarize(groups)
     iters = max({k[1] for k in groups}, key=lambda i: sum(len(v) for k, v in groups.items() if k[1] == i))
-    os.makedirs(PLOTS_DIR, exist_ok=True)
-    plot_sample_efficiency(groups, iters, os.path.join(PLOTS_DIR, 'sample_efficiency.png'), methods_order)
+    os.makedirs(plots_dir, exist_ok=True)
+    plot_sample_efficiency(groups, iters, os.path.join(plots_dir, 'sample_efficiency.png'), methods_order)
 
     def fmt(ms, scale=1.0, digits=0):
         m, s = ms

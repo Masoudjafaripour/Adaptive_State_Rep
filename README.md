@@ -25,6 +25,8 @@ The NLL term teaches each source's variance $v_t$ its actual error $e_t$, which 
 |---|---|---|
 | [src/baselines/](src/baselines/) | PPO (SB3) on Gymnasium CartPole: sensor-only vs image-only vs a fixed-gain Kalman filter fusion | ✅ Sensor 293, image 34, KF-fused 28 (return, max 500). Fixed fusion over a random image projection *hurts*. |
 | [src/fusion_e2e/](src/fusion_e2e/) | 8 fusion methods (sensor/image only, concat, fixed KF, gated, GRU, product of experts, **learned KF**) on a differentiable JAX CartPole with sensor or image corruption windows | 🟡 3 seeds running. Seed 0 so far: `concat` 476, `sensor_only` 443, `image_only` 363 (survival, max 500) |
+| [src/latent_fusion/](src/latent_fusion/) | Same idea **without ground-truth state**: Kalman fusion in a learned latent space, trained self-supervised (innovation NLL, self-prediction, augmentation) against a privileged oracle | ⏳ Code ready, not trained yet |
+| [src/wm_fusion/](src/wm_fusion/) | **Main contribution on the standard benchmark:** Dreamer-style world model with an adaptive Kalman posterior over pixels + proprio, on DeepMind Control (dm_control / MJX) | ⏳ Code ready, smoke-tested; needs a GPU for full runs |
 | [src/learned_gain_draft/](src/learned_gain_draft/) | First prototype: actor network that outputs an action and a gain (Acrobot) | Archived, no training loop |
 
 Details and metrics: [src/README.md](src/README.md). Every fusion_e2e run is logged in [runs/records.csv](src/fusion_e2e/runs/records.csv).

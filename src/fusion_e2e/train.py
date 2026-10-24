@@ -135,9 +135,9 @@ def evaluate(fns, params, cfg, key, keep_traces=False):
     return res
 
 
-def train_method(name, cfg, iters, seed, live_hist, live_path):
-    method = METHODS[name]
-    fns = build(method, cfg)
+def train_method(name, cfg, iters, seed, live_hist, live_path, fns=None):
+    """`fns` lets other experiments (e.g. latent_fusion) reuse this loop with their own build()."""
+    fns = fns or build(METHODS[name], cfg)
     key = jax.random.PRNGKey(seed)
     key, k_init = jax.random.split(key)
     eval_key = jax.random.PRNGKey(10_000 + seed)
